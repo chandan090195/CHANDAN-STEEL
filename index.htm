@@ -370,7 +370,15 @@ function enterApp() {
     showSyncStatus('✓ Synced');
     setTimeout(function() { showSyncStatus(''); }, 3000);
   });
-  setInterval(function() { syncFromCloud(function() { if(currentScreen==='home') rHome(); }); }, 5000);
+  setInterval(function() {
+    syncFromCloud(function() {
+      // Re-render whatever screen is currently showing
+      if(currentScreen==='home') rHome();
+      else if(currentScreen==='stock') rStock();
+      else if(currentScreen==='report') rReport();
+      else if(currentScreen==='credits') rCredits();
+    });
+  }, 5000);
 }
 
 function applyRole() {
@@ -482,6 +490,9 @@ function syncFromCloud(cb) {
 function showSyncStatus(msg) {
   var el = document.getElementById('sync-status');
   if (el) el.textContent = msg;
+  // Also show in page title briefly
+  if(msg) document.title = msg + ' - Chandan Steel';
+  else document.title = 'Chandan Steel';
 }
 
 // ── DATA MIGRATION from old keys ──────────────────
@@ -1410,7 +1421,14 @@ window.addEventListener('DOMContentLoaded',function(){
       showSyncStatus('Synced');
       setTimeout(function(){showSyncStatus('');},3000);
     });
-    setInterval(function(){syncFromCloud(function(){if(currentScreen==='home')rHome();});},5000);
+    setInterval(function(){
+      syncFromCloud(function(){
+        if(currentScreen==='home') rHome();
+        else if(currentScreen==='stock') rStock();
+        else if(currentScreen==='report') rReport();
+        else if(currentScreen==='credits') rCredits();
+      });
+    },5000);
     return;
   }
   // PIN
@@ -1453,34 +1471,10 @@ window.addEventListener('DOMContentLoaded',function(){
 });
 </script>
 <script>
+// Unregister any old service workers - always get fresh content
 if('serviceWorker' in navigator){
-  window.addEventListener('load',function(){
-    navigator.serviceWorker.register('sw.js').then(function(reg){
-      // Check for updates every 60 seconds
-      setInterval(function(){ reg.update(); }, 60000);
-      
-      // When new version is found, reload automatically
-      reg.addEventListener('updatefound', function(){
-        var newSW = reg.installing;
-        newSW.addEventListener('statechange', function(){
-          if(newSW.state === 'activated'){
-            // Show update notification
-            var div = document.createElement('div');
-            div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#34C759;color:#fff;text-align:center;padding:12px;font-size:14px;font-weight:600;z-index:99999;cursor:pointer;';
-            div.textContent = '✅ App updated! Tap to reload.';
-            div.onclick = function(){ window.location.reload(); };
-            document.body.appendChild(div);
-            // Auto reload after 3 seconds
-            setTimeout(function(){ window.location.reload(); }, 3000);
-          }
-        });
-      });
-    }).catch(function(){});
-  });
-  
-  // Listen for controller change (new SW took over)
-  navigator.serviceWorker.addEventListener('controllerchange', function(){
-    window.location.reload();
+  navigator.serviceWorker.getRegistrations().then(function(regs){
+    regs.forEach(function(reg){ reg.unregister(); });
   });
 }
 </script>
