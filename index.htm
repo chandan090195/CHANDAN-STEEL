@@ -370,15 +370,15 @@ function enterApp() {
     showSyncStatus('✓ Synced');
     setTimeout(function() { showSyncStatus(''); }, 3000);
   });
+  // Auto sync data every 8 seconds - only update vars, not UI
+  // This prevents breaking touch/click handlers
   setInterval(function() {
     syncFromCloud(function() {
-      // Re-render whatever screen is currently showing
-      if(currentScreen==='home') rHome();
-      else if(currentScreen==='stock') rStock();
-      else if(currentScreen==='report') rReport();
-      else if(currentScreen==='credits') rCredits();
+      // Only silently update data - don't re-render
+      // User will see updates when they navigate or tap SYNC
+      showSyncStatus('');
     });
-  }, 5000);
+  }, 8000);
 }
 
 function applyRole() {
@@ -555,7 +555,6 @@ function syncFromCloud(cb) {
 function showSyncStatus(msg) {
   var el = document.getElementById('sync-status');
   if (el) el.textContent = msg;
-  // Also show in page title briefly
   if(msg) document.title = msg + ' - Chandan Steel';
   else document.title = 'Chandan Steel';
 }
@@ -1491,13 +1490,8 @@ window.addEventListener('DOMContentLoaded',function(){
       setTimeout(function(){showSyncStatus('');},3000);
     });
     setInterval(function(){
-      syncFromCloud(function(){
-        if(currentScreen==='home') rHome();
-        else if(currentScreen==='stock') rStock();
-        else if(currentScreen==='report') rReport();
-        else if(currentScreen==='credits') rCredits();
-      });
-    },5000);
+      syncFromCloud(function(){ showSyncStatus(''); });
+    },8000);
     return;
   }
   // PIN
