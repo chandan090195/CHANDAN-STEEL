@@ -542,7 +542,7 @@ function syncFromCloud(cb){
     });
 
     prods=lg('cs5_p',[]);
-    hist=lg('cs5_h',[]).filter(function(x){return !x._deleted;});
+    hist=lg('cs5_h',[]);
     pricing=lg('cs5_pr',{basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
     customers=lg('cs5_cust',{});
     cb&&cb();
@@ -594,7 +594,7 @@ function gc(id){var c=CATS.find(function(x){return x.id===id;});return c?c.col:'
 function gi(id){var c=CATS.find(function(x){return x.id===id;});return c?c.icon:'📦';}
 
 var prods = lg('cs5_p', []);
-var hist  = lg('cs5_h', []).filter(function(x){return !x._deleted;});
+var hist  = lg('cs5_h', []);
 var pricing = lg('cs5_pr', {basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
 var customers = lg('cs5_cust', {});
 var cart = [];
@@ -653,7 +653,7 @@ function nd(){return new Date().toLocaleDateString('en-IN');}
 function nt(){return new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});}
 
 function avgBuyRate(pid) {
-  var buys = hist.filter(function(h){return h.type==='buy'&&h.pid===pid;});
+  var buys = hist.filter(function(h){return !h._deleted&&h.type==='buy'&&h.pid===pid;});
   if (!buys.length) { var p=prods.find(function(x){return x.id===pid;}); return p?p.sell:0; }
   var tq = buys.reduce(function(s,h){return s+h.qty;},0);
   return tq > 0 ? Math.round(buys.reduce(function(s,h){return s+h.total;},0)/tq*100)/100 : 0;
@@ -690,8 +690,8 @@ function show(s) {
 function rHome() {
   var el;
   el=document.getElementById('h-date'); if(el)el.textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'});
-  var rev=hist.filter(function(h){return h.type==='sell';}).reduce(function(s,h){return s+h.total;},0);
-  var cred=hist.filter(function(h){return h.type==='sell'&&h.pay==='credit'&&!h.paid;}).reduce(function(s,h){return s+(h.pd&&h.pd.balance!=null?h.pd.balance:h.total);},0);
+  var rev=hist.filter(function(h){return !h._deleted&&h.type==='sell';}).reduce(function(s,h){return s+h.total;},0);
+  var cred=hist.filter(function(h){return !h._deleted&&h.type==='sell'&&h.pay==='credit'&&!h.paid;}).reduce(function(s,h){return s+(h.pd&&h.pd.balance!=null?h.pd.balance:h.total);},0);
   el=document.getElementById('h-items'); if(el)el.textContent=prods.length;
   el=document.getElementById('h-rev'); if(el)el.textContent=fm(rev);
   el=document.getElementById('h-cred'); if(el)el.textContent=fm(cred);
@@ -1233,6 +1233,7 @@ function priceNav(dir){
 function fTx(){
   var now=new Date();
   return hist.filter(function(h){
+    if(h._deleted)return false;
     if(rFilter==='all')return true;
     var pts=h.date.split('/'),hd=new Date(parseInt(pts[2]),parseInt(pts[1])-1,parseInt(pts[0]));
     if(rFilter==='today')return hd.toDateString()===now.toDateString();
@@ -1294,7 +1295,7 @@ function rReport(){
 
 // ── CREDITS ───────────────────────────────────────
 function rCredits(){
-  var cr=hist.filter(function(h){return h.type==='sell'&&h.pay==='credit';});
+  var cr=hist.filter(function(h){return !h._deleted&&h.type==='sell'&&h.pay==='credit';});
   var up=cr.filter(function(h){return !h.paid;});
   var sub=document.getElementById('cred-sub');if(sub)sub.textContent=up.length+' pending';
   var cl=document.getElementById('cred-list');if(!cl)return;
@@ -1349,7 +1350,7 @@ function rAI(){
   var items=prods.map(function(p){
     var avg=avgBuyRate(p.id);var sell=p.sell||0;
     var pct=avg>0?Math.round((sell-avg)/avg*100):0;
-    var buys=hist.filter(function(h){return h.type==='buy'&&h.pid===p.id;});
+    var buys=hist.filter(function(h){return !h._deleted&&h.type==='buy'&&h.pid===p.id;});
     var sug,col;
     if(!buys.length){sug='No purchase history yet.';col='#8E8E93';}
     else if(pct<3){sug='Low margin ('+pct+'%). Buy at max Rs.'+Math.round(sell*0.95)+'/kg.';col='#FF3B30';}
@@ -1372,7 +1373,7 @@ function rAI(){
 
 // ── EDIT ──────────────────────────────────────────
 function openEdit(id){
-  var h=hist.find(function(x){return String(x.id)===String(id);});
+  var h=hist.find(function(x){return !x._deleted&&String(x.id)===String(id);});
   if(!h){pop('Not found',false);return;}
   editId=id;
   var sub=document.getElementById('edit-sub');if(sub)sub.textContent=h.name+' · '+h.date;
