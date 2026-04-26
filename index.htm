@@ -434,7 +434,7 @@ function switchMode() {
 // ── SUPABASE SYNC ──────────────────────────────────
 var SB_URL = 'https://cnhrgmdgotoqifatkdrr.supabase.co';
 var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuaHJnbWRnb3RvcWlmYXRrZHJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NTUyOTcsImV4cCI6MjA5MjUzMTI5N30.d14ab0DDpUL1ZI8H8tN7ECGmB815ks9pHUuPakM93lU';
-var SYNC_KEYS = ['cs5_p','cs5_h','cs5_pr','cs5_cust','cs5_bno'];
+var SYNC_KEYS = ['cs5_p','cs5_h','cs5_pr','cs5_cust','cs5_bno','cs5_del'];
 
 function sbHdr() {
   return {'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'resolution=merge-duplicates'};
@@ -467,7 +467,27 @@ function syncFromCloud(cb) {
   .then(function(rows){
     if(!Array.isArray(rows)){cb&&cb();return;}
     
+    // First pass: get deleted IDs from cloud
+    var cloudDeletedIds={};
     rows.forEach(function(row){
+      if(row.key==='cs5_del'){
+        try{
+          var dels=JSON.parse(row.value);
+          if(Array.isArray(dels))dels.forEach(function(d){cloudDeletedIds[String(d.id)]=true;});
+        }catch(e){}
+      }
+    });
+    // Apply cloud deletions to local history
+    if(Object.keys(cloudDeletedIds).length>0){
+      var localHist=lg('cs5_h',[]);
+      var filtered=localHist.filter(function(x){return !cloudDeletedIds[String(x.id)];});
+      if(filtered.length!==localHist.length){
+        localStorage.setItem('cs5_h',JSON.stringify(filtered));
+      }
+    }
+
+    rows.forEach(function(row){
+      if(row.key==='cs5_del')return;
       try{
         var cloudVal = JSON.parse(row.value);
         var cloudTime = new Date(row.updated_at).getTime();
