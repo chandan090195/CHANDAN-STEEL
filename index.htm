@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,minimum-scale=1,user-scalable=no"/>
 <title>Chandan Steel</title>
 <meta name="application-name" content="Chandan Steel"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
@@ -164,7 +164,7 @@ input{font-family:inherit;outline:none;}
 .pin-dot{width:14px;height:14px;border-radius:50%;background:#E5E5EA;display:inline-block;margin:0 7px;}
 .pin-dot.on{background:#1C1C1E;}
 .pin-pad{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#E5E5EA;border-radius:14px;overflow:hidden;width:280px;}
-.pin-key{height:68px;font-size:26px;font-weight:300;background:#fff;color:#1C1C1E;border:none;cursor:pointer;font-family:inherit;}
+.pin-key{height:68px;font-size:26px;font-weight:300;background:#fff;color:#1C1C1E;border:none;cursor:pointer;font-family:inherit;touch-action:manipulation;-webkit-tap-highlight-color:transparent;}
 .pin-key:active{background:#F2F2F7;}
 </style>
 </head>
@@ -347,8 +347,8 @@ function renderPinDots() {
 }
 
 function checkPin() {
-  if (pinInput === OWNER_PIN) { userRole = 'owner'; enterApp(); }
-  else if (pinInput === STAFF_PIN) { userRole = 'staff'; enterApp(); }
+  if (pinInput === OWNER_PIN) { userRole = 'owner'; sessionStorage.setItem('cs_role','owner'); enterApp(); }
+  else if (pinInput === STAFF_PIN) { userRole = 'staff'; sessionStorage.setItem('cs_role','staff'); enterApp(); }
   else {
     document.getElementById('pin-error').textContent = 'Wrong PIN. Try again.';
     var dots = document.getElementById('pin-dots');
@@ -1398,6 +1398,21 @@ function exportPDF(){
 
 // ── INIT ──────────────────────────────────────────
 window.addEventListener('DOMContentLoaded',function(){
+  // Check if already logged in this session (refresh won't need PIN again)
+  var savedRole = sessionStorage.getItem('cs_role');
+  if(savedRole === 'owner' || savedRole === 'staff'){
+    userRole = savedRole;
+    document.getElementById('s-pin').style.display = 'none';
+    applyRole();
+    show('home');
+    syncFromCloud(function(){
+      pushAllToCloud();
+      showSyncStatus('Synced');
+      setTimeout(function(){showSyncStatus('');},3000);
+    });
+    setInterval(function(){syncFromCloud(function(){if(currentScreen==='home')rHome();});},5000);
+    return;
+  }
   // PIN
   initPin();
 
