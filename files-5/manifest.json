@@ -1,0 +1,25 @@
+{
+  "name": "Chandan Steel",
+  "short_name": "ChandanSteel",
+  "description": "Stock Management App",
+  "start_url": "https://chandan-steel.vercel.app/",
+  "scope": "https://chandan-steel.vercel.app/",
+  "display": "standalone",
+  "background_color": "#F2F2F7",
+  "theme_color": "#1C1C1E",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
