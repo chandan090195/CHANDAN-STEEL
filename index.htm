@@ -352,8 +352,8 @@ function checkPin() {
   else {
     document.getElementById('pin-error').textContent = 'Wrong PIN. Try again.';
     var dots = document.getElementById('pin-dots');
-    dots.style.animation = 'shake 0.3s';
-    setTimeout(function() { dots.style.animation = ''; }, 300);
+    dots.style.transform='translateX(-8px)';setTimeout(function(){dots.style.transform='';},150);
+    
     pinInput = '';
     renderPinDots();
   }
@@ -462,30 +462,75 @@ function pushAllToCloud() {
 }
 
 function syncFromCloud(cb) {
-  fetch(SB_URL+'/rest/v1/cs_data?select=key,value', {headers:sbHdr()})
+  fetch(SB_URL+'/rest/v1/cs_data?select=key,value,updated_at', {headers:sbHdr()})
   .then(function(r){return r.json();})
   .then(function(rows){
-    if (!Array.isArray(rows)) { cb&&cb(); return; }
-    rows.forEach(function(row) {
-      try {
-        var cloud = JSON.parse(row.value);
-        var local = localStorage.getItem(row.key);
-        var localParsed = local ? JSON.parse(local) : null;
-        if (Array.isArray(cloud) && Array.isArray(localParsed)) {
-          if (cloud.length >= localParsed.length) localStorage.setItem(row.key, row.value);
+    if(!Array.isArray(rows)){cb&&cb();return;}
+    
+    rows.forEach(function(row){
+      try{
+        var cloudVal = JSON.parse(row.value);
+        var cloudTime = new Date(row.updated_at).getTime();
+        var localSavedAt = parseInt(localStorage.getItem(row.key+'_saved_at')||'0');
+
+        if(row.key==='cs5_h'){
+          // History: merge by ID - never lose any record
+          var cloudArr = Array.isArray(cloudVal)?cloudVal:[];
+          var localArr = lg(row.key,[]);
+          var map={};
+          // Put all local records in map
+          localArr.forEach(function(x){map[String(x.id)]=x;});
+          // Add/overwrite with cloud records
+          cloudArr.forEach(function(x){
+            var id=String(x.id);
+            if(!map[id]){
+              // New from cloud - add it
+              map[id]=x;
+            } else {
+              // Both have it - cloud wins (last edit from any device wins)
+              // Use the record with more recent edit (has editLog or higher bno)
+              if(cloudTime > localSavedAt){
+                map[id]=x;
+              }
+            }
+          });
+          var merged=Object.keys(map).map(function(k){return map[k];});
+          merged.sort(function(a,b){return b.id-a.id;});
+          localStorage.setItem(row.key, JSON.stringify(merged));
+
+        } else if(row.key==='cs5_p'){
+          // Products: merge by ID - never lose any item
+          var cloudArr = Array.isArray(cloudVal)?cloudVal:[];
+          var localArr = lg(row.key,[]);
+          var map={};
+          localArr.forEach(function(x){map[String(x.id)]=x;});
+          cloudArr.forEach(function(x){
+            var id=String(x.id);
+            if(!map[id]){
+              map[id]=x; // new item from cloud
+            } else if(cloudTime > localSavedAt){
+              map[id]=x; // cloud is newer, update stock/sell
+            }
+          });
+          var merged=Object.keys(map).map(function(k){return map[k];});
+          localStorage.setItem(row.key, JSON.stringify(merged));
+
         } else {
+          // pricing, customers, bno: cloud wins always
           localStorage.setItem(row.key, row.value);
         }
-      } catch(e){}
+      }catch(e){}
     });
-    // Reload vars
-    prods = lg('cs5_p', []);
-    hist = lg('cs5_h', []);
-    pricing = lg('cs5_pr', {basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
-    customers = lg('cs5_cust', {});
+
+    // Reload all vars from localStorage
+    prods    = lg('cs5_p',[]);
+    hist     = lg('cs5_h',[]);
+    pricing  = lg('cs5_pr',{basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
+    customers= lg('cs5_cust',{});
     cb&&cb();
-  }).catch(function(){ cb&&cb(); });
+  }).catch(function(){cb&&cb();});
 }
+
 
 function showSyncStatus(msg) {
   var el = document.getElementById('sync-status');
@@ -519,7 +564,11 @@ function showSyncStatus(msg) {
 
 // ── STORAGE ───────────────────────────────────────
 function lg(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
-function ls(k,v){localStorage.setItem(k,JSON.stringify(v));syncToCloud(k,v);}
+function ls(k,v){
+  localStorage.setItem(k,JSON.stringify(v));
+  localStorage.setItem(k+'_saved_at', Date.now().toString());
+  syncToCloud(k,v);
+}
 
 // ── DATA VARS ─────────────────────────────────────
 var CATS = [
