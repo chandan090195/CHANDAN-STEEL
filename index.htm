@@ -434,129 +434,107 @@ function switchMode() {
 // ── SUPABASE SYNC ──────────────────────────────────
 var SB_URL = 'https://cnhrgmdgotoqifatkdrr.supabase.co';
 var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuaHJnbWRnb3RvcWlmYXRrZHJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NTUyOTcsImV4cCI6MjA5MjUzMTI5N30.d14ab0DDpUL1ZI8H8tN7ECGmB815ks9pHUuPakM93lU';
-var SYNC_KEYS = ['cs5_p','cs5_h','cs5_pr','cs5_cust','cs5_bno','cs5_del'];
+var SYNC_KEYS = ['cs5_p','cs5_h','cs5_pr','cs5_cust','cs5_bno'];
 
-function sbHdr() {
+function sbHdr(){
   return {'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'resolution=merge-duplicates'};
 }
 
-function syncToCloud(key, val) {
-  if (SYNC_KEYS.indexOf(key) < 0) return;
-  var ts = new Date().toISOString();
-  localStorage.setItem(key+'_ts', ts); // store local timestamp
-  fetch(SB_URL+'/rest/v1/cs_data', {
-    method:'POST', headers:sbHdr(),
-    body:JSON.stringify({key:key, value:JSON.stringify(val), updated_at:ts})
+// Save one key to cloud
+function syncToCloud(key,val){
+  if(SYNC_KEYS.indexOf(key)<0)return;
+  fetch(SB_URL+'/rest/v1/cs_data',{
+    method:'POST',headers:sbHdr(),
+    body:JSON.stringify({key:key,value:JSON.stringify(val),updated_at:new Date().toISOString()})
   }).catch(function(){});
 }
 
-function pushAllToCloud() {
-  SYNC_KEYS.forEach(function(k) {
-    var v = localStorage.getItem(k);
-    if (!v) return;
-    fetch(SB_URL+'/rest/v1/cs_data', {
-      method:'POST', headers:sbHdr(),
+// Push ALL local data to cloud
+function pushAllToCloud(){
+  SYNC_KEYS.forEach(function(k){
+    var v=localStorage.getItem(k);
+    if(!v)return;
+    fetch(SB_URL+'/rest/v1/cs_data',{
+      method:'POST',headers:sbHdr(),
       body:JSON.stringify({key:k,value:v,updated_at:new Date().toISOString()})
     }).catch(function(){});
   });
 }
 
-function syncFromCloud(cb) {
-  fetch(SB_URL+'/rest/v1/cs_data?select=key,value,updated_at', {headers:sbHdr()})
+// Pull from cloud and merge smartly
+function syncFromCloud(cb){
+  fetch(SB_URL+'/rest/v1/cs_data?select=key,value,updated_at',{headers:sbHdr()})
   .then(function(r){return r.json();})
   .then(function(rows){
     if(!Array.isArray(rows)){cb&&cb();return;}
     
-    // First pass: get deleted IDs from cloud
-    var cloudDeletedIds={};
     rows.forEach(function(row){
-      if(row.key==='cs5_del'){
-        try{
-          var dels=JSON.parse(row.value);
-          if(Array.isArray(dels))dels.forEach(function(d){cloudDeletedIds[String(d.id)]=true;});
-        }catch(e){}
-      }
-    });
-    // Apply cloud deletions to local history
-    if(Object.keys(cloudDeletedIds).length>0){
-      var localHist=lg('cs5_h',[]);
-      var filtered=localHist.filter(function(x){return !cloudDeletedIds[String(x.id)];});
-      if(filtered.length!==localHist.length){
-        localStorage.setItem('cs5_h',JSON.stringify(filtered));
-      }
-    }
-
-    rows.forEach(function(row){
-      if(row.key==='cs5_del')return;
       try{
-        var cloudVal = JSON.parse(row.value);
-        var cloudTime = new Date(row.updated_at).getTime();
-        var localSavedAt = parseInt(localStorage.getItem(row.key+'_saved_at')||'0');
-
+        var cloudData=JSON.parse(row.value);
+        var cloudTime=new Date(row.updated_at).getTime();
+        var localSavedAt=parseInt(localStorage.getItem(row.key+'_ts')||'0');
+        
         if(row.key==='cs5_h'){
-          // History: merge by ID - never lose any record
-          var cloudArr = Array.isArray(cloudVal)?cloudVal:[];
-          var localArr = lg(row.key,[]);
+          // HISTORY: merge every record by ID
+          var cloud=Array.isArray(cloudData)?cloudData:[];
+          var local=lg('cs5_h',[]);
+          
+          // Build map from local (excluding deleted)
           var map={};
-          // Put all local records in map
-          localArr.forEach(function(x){map[String(x.id)]=x;});
-          // Add/overwrite with cloud records
-          cloudArr.forEach(function(x){
+          local.forEach(function(x){
+            if(!x._deleted) map[String(x.id)]=x;
+          });
+          
+          // Process each cloud record
+          cloud.forEach(function(x){
             var id=String(x.id);
-            if(!map[id]){
-              // New from cloud - add it
+            if(x._deleted){
+              // Cloud deleted this - remove locally too
+              delete map[id];
+            } else if(!map[id]){
+              // Cloud has record we don't - add it
               map[id]=x;
             } else {
-              // Both have it - cloud wins (last edit from any device wins)
-              // Use the record with more recent edit (has editLog or higher bno)
-              if(cloudTime > localSavedAt){
-                map[id]=x;
-              }
+              // Both have it - cloud wins if cloud is newer
+              if(cloudTime>localSavedAt) map[id]=x;
             }
           });
+          
           var merged=Object.keys(map).map(function(k){return map[k];});
           merged.sort(function(a,b){return b.id-a.id;});
-          localStorage.setItem(row.key, JSON.stringify(merged));
-
+          localStorage.setItem('cs5_h',JSON.stringify(merged));
+          
         } else if(row.key==='cs5_p'){
-          // Products: merge by ID - never lose any item
-          var cloudArr = Array.isArray(cloudVal)?cloudVal:[];
-          var localArr = lg(row.key,[]);
+          // PRODUCTS: merge every item by ID
+          var cloud=Array.isArray(cloudData)?cloudData:[];
+          var local=lg('cs5_p',[]);
           var map={};
-          localArr.forEach(function(x){map[String(x.id)]=x;});
-          cloudArr.forEach(function(x){
+          local.forEach(function(x){map[String(x.id)]=x;});
+          cloud.forEach(function(x){
             var id=String(x.id);
             if(!map[id]){
               map[id]=x; // new item from cloud
-            } else if(cloudTime > localSavedAt){
-              map[id]=x; // cloud is newer, update stock/sell
+            } else if(cloudTime>localSavedAt){
+              map[id]=x; // cloud newer - update stock
             }
           });
           var merged=Object.keys(map).map(function(k){return map[k];});
-          localStorage.setItem(row.key, JSON.stringify(merged));
-
+          localStorage.setItem('cs5_p',JSON.stringify(merged));
+          
         } else {
-          // pricing, customers, bno: cloud wins always
-          localStorage.setItem(row.key, row.value);
+          // pricing, customers, bno - cloud wins always
+          localStorage.setItem(row.key,row.value);
         }
       }catch(e){}
     });
-
-    // Reload all vars from localStorage
-    prods    = lg('cs5_p',[]);
-    hist     = lg('cs5_h',[]);
-    pricing  = lg('cs5_pr',{basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
-    customers= lg('cs5_cust',{});
+    
+    // Reload all vars
+    prods=lg('cs5_p',[]);
+    hist=lg('cs5_h',[]).filter(function(x){return !x._deleted;});
+    pricing=lg('cs5_pr',{basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
+    customers=lg('cs5_cust',{});
     cb&&cb();
   }).catch(function(){cb&&cb();});
-}
-
-
-function showSyncStatus(msg) {
-  var el = document.getElementById('sync-status');
-  if (el) el.textContent = msg;
-  if(msg) document.title = msg + ' - Chandan Steel';
-  else document.title = 'Chandan Steel';
 }
 
 // ── DATA MIGRATION from old keys ──────────────────
@@ -604,7 +582,7 @@ function gc(id){var c=CATS.find(function(x){return x.id===id;});return c?c.col:'
 function gi(id){var c=CATS.find(function(x){return x.id===id;});return c?c.icon:'📦';}
 
 var prods = lg('cs5_p', []);
-var hist  = lg('cs5_h', []);
+var hist  = lg('cs5_h', []).filter(function(x){return !x._deleted;});
 var pricing = lg('cs5_pr', {basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
 var customers = lg('cs5_cust', {});
 var cart = [];
