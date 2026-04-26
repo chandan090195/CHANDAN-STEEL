@@ -489,14 +489,20 @@ function syncFromCloud(cb){
           cloud.forEach(function(x){
             var id=String(x.id);
             if(x._deleted){
-              // Cloud deleted this - remove locally too
+              // Cloud deleted - remove locally too
               delete map[id];
             } else if(!map[id]){
-              // Cloud has record we don't - add it
+              // New record from cloud - add it
               map[id]=x;
             } else {
-              // Both have it - cloud wins if cloud is newer
-              if(cloudTime>localSavedAt) map[id]=x;
+              // Both have it - use record-level editedAt if available
+              // Otherwise use overall cloud vs local timestamp
+              var cloudRecordTime = x.editedAt || cloudTime;
+              var localRecordTime = (map[id].editedAt) || localSavedAt;
+              if(cloudRecordTime > localRecordTime){
+                map[id]=x; // cloud version is newer
+              }
+              // else keep local version
             }
           });
           
@@ -792,7 +798,7 @@ function confirmBuy(){
   ls('cs5_p',prods);
   var bdEl=document.getElementById('buy-date');
   var buyDateStr=bdEl&&bdEl.value?new Date(bdEl.value+' 00:00').toLocaleDateString('en-IN'):nd();
-  hist.unshift({id:Date.now(),type:'buy',pid:buyProd.id,name:buyProd.name,icon:buyProd.icon,cat:buyProd.cat,qty:qty,rateKg:rate,expense:exp,total:qty*rate,date:buyDateStr,time:nt()});
+  hist.unshift({id:Date.now(),type:'buy',pid:buyProd.id,name:buyProd.name,icon:buyProd.icon,cat:buyProd.cat,qty:qty,rateKg:rate,expense:exp,total:qty*rate,date:buyDateStr,time:nt(),editedAt:Date.now()});
   ls('cs5_h',hist);
   pushAllToCloud();
   pop('Purchased '+fq(qty)+' of '+buyProd.name);show('home');
@@ -1017,7 +1023,7 @@ function confirmSale(tTotal,tGST){
     var avg=avgBuyRate(ci.prod.id);
     var profit=Math.round((ci.rateKg-avg)*ci.qty*100)/100;
     prods=prods.map(function(p){return p.id!==ci.prod.id?p:Object.assign({},p,{stock:Math.round((p.stock-ci.qty)*100)/100,sold:Math.round(((p.sold||0)+ci.qty)*100)/100});});
-    hist.unshift({id:Date.now()+Math.random(),type:'sell',bno:bno,pid:ci.prod.id,
+    hist.unshift({id:Date.now()+Math.random(),type:'sell',bno:bno,pid:ci.prod.id,editedAt:Date.now(),
       name:ci.prod.name,icon:ci.prod.icon,cat:ci.prod.cat,
       qty:ci.qty,rateKg:ci.rateKg,rateMT:ci.rateMT,
       base:ci.bill.base,gst:ci.bill.gst,total:ci.bill.total,
@@ -1409,15 +1415,27 @@ function saveEdit(){
   ls('cs5_p',prods);
   hist=hist.map(function(x){
     if(String(x.id)!==String(editId))return x;
-    var u=Object.assign({},x,{qty:nq,rateKg:nr,total:Math.round(nq*nr*100)/100,editLog:log});
+    // Recalculate with GST
+    var base=Math.round(nq*nr*100)/100;
+    var gst=Math.round(base*0.18*100)/100;
+    var total=Math.round((base+gst)*100)/100;
+    var u=Object.assign({},x,{
+      qty:nq,rateKg:nr,
+      base:base,gst:gst,total:total,
+      editLog:log,
+      editedAt:Date.now() // timestamp on the record itself
+    });
     if(cu)u.cust=custVal||x.cust;return u;
   });
-  ls('cs5_h',hist);pushAllToCloud();pop('Updated! Syncing...');show('report');
+  ls('cs5_h',hist);
+  pushAllToCloud();
+  pop('Updated!');show('report');
 }
 
 function deleteEdit(){
   var h=hist.find(function(x){return String(x.id)===String(editId);});
   if(!h)return;
+  // Reverse stock
   prods=prods.map(function(p){
     if(String(p.id)!==String(h.pid))return p;
     var s=p.stock;var so=p.sold||0;
@@ -1425,8 +1443,20 @@ function deleteEdit(){
     return Object.assign({},p,{stock:Math.round(Math.max(0,s)*100)/100,sold:Math.round(Math.max(0,so)*100)/100});
   });
   ls('cs5_p',prods);
-  hist=hist.filter(function(x){return String(x.id)!==String(editId);});
-  ls('cs5_h',hist);pushAllToCloud();pop('Deleted! Syncing...');show('report');
+  // IMPORTANT: mark _deleted:true - keep in array so cloud knows it's deleted
+  // All other devices will see _deleted:true and remove it
+  hist=hist.map(function(x){
+    return String(x.id)===String(editId)
+      ? Object.assign({},x,{_deleted:true, editedAt:Date.now()})
+      : x;
+  });
+  // Save full array with _deleted flag to cloud
+  ls('cs5_h',hist);
+  pushAllToCloud();
+  // Now remove from local view
+  hist=hist.filter(function(x){return !x._deleted;});
+  pop('Deleted!');
+  show('report');
 }
 
 // ── WHATSAPP REPORT ───────────────────────────────
