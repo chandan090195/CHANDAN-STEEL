@@ -552,7 +552,7 @@ var PIPE_PRESETS = [{"id":1700000001,"name":"Pipe 25X25X1.6","tamil":"","cat":"p
 if(!lg('cs5_pipes_done',false)){
   var existNames=prods.map(function(p){return p.name;});
   PIPE_PRESETS.forEach(function(p){if(existNames.indexOf(p.name)<0)prods.push(p);});
-  ls('cs5_p',prods);ls('cs5_pipes_done',true);
+  localStorage.setItem('cs5_p',JSON.stringify(prods));ls('cs5_pipes_done',true);
 }
 
 // ── CALC ──────────────────────────────────────────
