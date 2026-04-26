@@ -435,118 +435,80 @@ function switchMode() {
 var SB_URL = 'https://cnhrgmdgotoqifatkdrr.supabase.co';
 var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNuaHJnbWRnb3RvcWlmYXRrZHJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NTUyOTcsImV4cCI6MjA5MjUzMTI5N30.d14ab0DDpUL1ZI8H8tN7ECGmB815ks9pHUuPakM93lU';
 var SYNC_KEYS = ['cs5_p','cs5_h','cs5_pr','cs5_cust','cs5_bno'];
+var isSyncing = false;
 
 function sbHdr(){
-  return {'Content-Type':'application/json','apikey':SB_KEY,'Authorization':'Bearer '+SB_KEY,'Prefer':'resolution=merge-duplicates'};
+  return {
+    'Content-Type':'application/json',
+    'apikey':SB_KEY,
+    'Authorization':'Bearer '+SB_KEY,
+    'Prefer':'resolution=merge-duplicates'
+  };
 }
 
-// Save one key to cloud
-function syncToCloud(key,val){
-  if(SYNC_KEYS.indexOf(key)<0)return;
-  fetch(SB_URL+'/rest/v1/cs_data',{
-    method:'POST',headers:sbHdr(),
-    body:JSON.stringify({key:key,value:JSON.stringify(val),updated_at:new Date().toISOString()})
+// Push ONE key to cloud - cloud gets exact copy of local
+function pushKey(key, val){
+  var ts = new Date().toISOString();
+  return fetch(SB_URL+'/rest/v1/cs_data',{
+    method:'POST',
+    headers:sbHdr(),
+    body:JSON.stringify({key:key, value:JSON.stringify(val), updated_at:ts})
   }).catch(function(){});
 }
 
-// Push ALL local data to cloud
+// Called every time data changes - push that key immediately
+function syncToCloud(key, val){
+  if(SYNC_KEYS.indexOf(key)<0) return;
+  pushKey(key, val);
+}
+
+// Push ALL keys to cloud at once
 function pushAllToCloud(){
   SYNC_KEYS.forEach(function(k){
-    var v=localStorage.getItem(k);
-    if(!v)return;
-    fetch(SB_URL+'/rest/v1/cs_data',{
-      method:'POST',headers:sbHdr(),
-      body:JSON.stringify({key:k,value:v,updated_at:new Date().toISOString()})
-    }).catch(function(){});
+    var v = localStorage.getItem(k);
+    if(v) pushKey(k, JSON.parse(v));
   });
 }
 
-// Pull from cloud and merge smartly
+// Pull from cloud - CLOUD WINS COMPLETELY for each key
+// No merging. Whatever cloud has = truth.
 function syncFromCloud(cb){
-  fetch(SB_URL+'/rest/v1/cs_data?select=key,value,updated_at',{headers:sbHdr()})
-  .then(function(r){return r.json();})
+  if(isSyncing){ cb&&cb(); return; }
+  isSyncing = true;
+  fetch(SB_URL+'/rest/v1/cs_data?select=key,value,updated_at&order=updated_at.desc',{headers:sbHdr()})
+  .then(function(r){ return r.json(); })
   .then(function(rows){
-    if(!Array.isArray(rows)){cb&&cb();return;}
+    if(!Array.isArray(rows)){ isSyncing=false; cb&&cb(); return; }
 
-    // Step 1: Get cloud history to find deleted record IDs
-    var cloudDeletedIds={};
-    var cloudHistRow=null;
+    // Get latest value per key from cloud
+    var cloudMap = {};
     rows.forEach(function(row){
-      if(row.key==='cs5_h'){
-        try{
-          var arr=JSON.parse(row.value);
-          if(Array.isArray(arr)){
-            cloudHistRow={data:arr,time:new Date(row.updated_at).getTime()};
-            arr.forEach(function(x){if(x._deleted)cloudDeletedIds[String(x.id)]=true;});
-          }
-        }catch(e){}
+      if(!cloudMap[row.key]) cloudMap[row.key] = row; // already ordered desc, so first = latest
+    });
+
+    // For each key: cloud wins IF cloud was saved AFTER local
+    SYNC_KEYS.forEach(function(k){
+      if(!cloudMap[k]) return;
+      var cloudTime = new Date(cloudMap[k].updated_at).getTime();
+      var localTime = parseInt(localStorage.getItem(k+'_saved_at')||'0');
+
+      if(cloudTime > localTime){
+        // Cloud is newer - replace local completely
+        localStorage.setItem(k, cloudMap[k].value);
+        localStorage.setItem(k+'_saved_at', cloudTime.toString());
       }
+      // else: local is newer (we just saved) - keep local, don't overwrite
     });
 
-    rows.forEach(function(row){
-      try{
-        var cloudData=JSON.parse(row.value);
-        var cloudTime=new Date(row.updated_at).getTime();
-        var localSavedAt=parseInt(localStorage.getItem(row.key+'_ts')||'0');
-
-        if(row.key==='cs5_h'){
-          var cloud=Array.isArray(cloudData)?cloudData:[];
-          var local=lg('cs5_h',[]);
-
-          // Build map - local records (skip deleted ones)
-          var map={};
-          local.forEach(function(x){
-            if(!x._deleted && !cloudDeletedIds[String(x.id)]){
-              map[String(x.id)]=x;
-            }
-          });
-
-          // Process cloud records
-          cloud.forEach(function(x){
-            var id=String(x.id);
-            if(x._deleted){
-              // Deleted in cloud - remove from map
-              delete map[id];
-            } else if(!map[id]){
-              // New from cloud - add it
-              map[id]=x;
-            } else {
-              // Both have it - newest editedAt wins
-              var ct=x.editedAt||cloudTime;
-              var lt=map[id].editedAt||localSavedAt;
-              if(ct>lt) map[id]=x;
-            }
-          });
-
-          var merged=Object.keys(map).map(function(k){return map[k];});
-          merged.sort(function(a,b){return b.id-a.id;});
-          localStorage.setItem('cs5_h',JSON.stringify(merged));
-
-        } else if(row.key==='cs5_p'){
-          var cloud=Array.isArray(cloudData)?cloudData:[];
-          var local=lg('cs5_p',[]);
-          var map={};
-          local.forEach(function(x){map[String(x.id)]=x;});
-          cloud.forEach(function(x){
-            var id=String(x.id);
-            if(!map[id]) map[id]=x;
-            else if(cloudTime>localSavedAt) map[id]=x;
-          });
-          var merged=Object.keys(map).map(function(k){return map[k];});
-          localStorage.setItem('cs5_p',JSON.stringify(merged));
-
-        } else {
-          localStorage.setItem(row.key,row.value);
-        }
-      }catch(e){}
-    });
-
-    prods=lg('cs5_p',[]);
-    hist=lg('cs5_h',[]);
-    pricing=lg('cs5_pr',{basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
-    customers=lg('cs5_cust',{});
+    // Reload all vars from localStorage
+    prods    = lg('cs5_p',[]);
+    hist     = lg('cs5_h',[]);
+    pricing  = lg('cs5_pr',{basicPrices:{angle:0,channel:0,flat:0,pipe:0,plate:0,sheet:0},transport:3,margin:2});
+    customers= lg('cs5_cust',{});
+    isSyncing = false;
     cb&&cb();
-  }).catch(function(){cb&&cb();});
+  })
+  .catch(function(){ isSyncing=false; cb&&cb(); });
 }
 
 // ── DATA MIGRATION from old keys ──────────────────
@@ -574,9 +536,10 @@ function syncFromCloud(cb){
 // ── STORAGE ───────────────────────────────────────
 function lg(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
 function ls(k,v){
-  localStorage.setItem(k,JSON.stringify(v));
-  localStorage.setItem(k+'_saved_at', Date.now().toString());
-  syncToCloud(k,v);
+  var now = Date.now();
+  localStorage.setItem(k, JSON.stringify(v));
+  localStorage.setItem(k+'_saved_at', now.toString());
+  syncToCloud(k, v);
 }
 
 // ── DATA VARS ─────────────────────────────────────
@@ -653,7 +616,7 @@ function nd(){return new Date().toLocaleDateString('en-IN');}
 function nt(){return new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});}
 
 function avgBuyRate(pid) {
-  var buys = hist.filter(function(h){return !h._deleted&&h.type==='buy'&&h.pid===pid;});
+  var buys = hist.filter(function(h){return h.type==='buy'&&h.pid===pid;});
   if (!buys.length) { var p=prods.find(function(x){return x.id===pid;}); return p?p.sell:0; }
   var tq = buys.reduce(function(s,h){return s+h.qty;},0);
   return tq > 0 ? Math.round(buys.reduce(function(s,h){return s+h.total;},0)/tq*100)/100 : 0;
@@ -690,8 +653,8 @@ function show(s) {
 function rHome() {
   var el;
   el=document.getElementById('h-date'); if(el)el.textContent=new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'});
-  var rev=hist.filter(function(h){return !h._deleted&&h.type==='sell';}).reduce(function(s,h){return s+h.total;},0);
-  var cred=hist.filter(function(h){return !h._deleted&&h.type==='sell'&&h.pay==='credit'&&!h.paid;}).reduce(function(s,h){return s+(h.pd&&h.pd.balance!=null?h.pd.balance:h.total);},0);
+  var rev=hist.filter(function(h){return h.type==='sell';}).reduce(function(s,h){return s+h.total;},0);
+  var cred=hist.filter(function(h){return h.type==='sell'&&h.pay==='credit'&&!h.paid;}).reduce(function(s,h){return s+(h.pd&&h.pd.balance!=null?h.pd.balance:h.total);},0);
   el=document.getElementById('h-items'); if(el)el.textContent=prods.length;
   el=document.getElementById('h-rev'); if(el)el.textContent=fm(rev);
   el=document.getElementById('h-cred'); if(el)el.textContent=fm(cred);
@@ -1233,7 +1196,6 @@ function priceNav(dir){
 function fTx(){
   var now=new Date();
   return hist.filter(function(h){
-    if(h._deleted)return false;
     if(rFilter==='all')return true;
     var pts=h.date.split('/'),hd=new Date(parseInt(pts[2]),parseInt(pts[1])-1,parseInt(pts[0]));
     if(rFilter==='today')return hd.toDateString()===now.toDateString();
@@ -1295,7 +1257,7 @@ function rReport(){
 
 // ── CREDITS ───────────────────────────────────────
 function rCredits(){
-  var cr=hist.filter(function(h){return !h._deleted&&h.type==='sell'&&h.pay==='credit';});
+  var cr=hist.filter(function(h){return h.type==='sell'&&h.pay==='credit';});
   var up=cr.filter(function(h){return !h.paid;});
   var sub=document.getElementById('cred-sub');if(sub)sub.textContent=up.length+' pending';
   var cl=document.getElementById('cred-list');if(!cl)return;
@@ -1350,7 +1312,7 @@ function rAI(){
   var items=prods.map(function(p){
     var avg=avgBuyRate(p.id);var sell=p.sell||0;
     var pct=avg>0?Math.round((sell-avg)/avg*100):0;
-    var buys=hist.filter(function(h){return !h._deleted&&h.type==='buy'&&h.pid===p.id;});
+    var buys=hist.filter(function(h){return h.type==='buy'&&h.pid===p.id;});
     var sug,col;
     if(!buys.length){sug='No purchase history yet.';col='#8E8E93';}
     else if(pct<3){sug='Low margin ('+pct+'%). Buy at max Rs.'+Math.round(sell*0.95)+'/kg.';col='#FF3B30';}
@@ -1373,7 +1335,7 @@ function rAI(){
 
 // ── EDIT ──────────────────────────────────────────
 function openEdit(id){
-  var h=hist.find(function(x){return !x._deleted&&String(x.id)===String(id);});
+  var h=hist.find(function(x){return String(x.id)===String(id);});
   if(!h){pop('Not found',false);return;}
   editId=id;
   var sub=document.getElementById('edit-sub');if(sub)sub.textContent=h.name+' · '+h.date;
@@ -1422,17 +1384,12 @@ function saveEdit(){
   ls('cs5_p',prods);
   hist=hist.map(function(x){
     if(String(x.id)!==String(editId))return x;
-    // Recalculate with GST
     var base=Math.round(nq*nr*100)/100;
     var gst=Math.round(base*0.18*100)/100;
     var total=Math.round((base+gst)*100)/100;
-    var u=Object.assign({},x,{
-      qty:nq,rateKg:nr,
-      base:base,gst:gst,total:total,
-      editLog:log,
-      editedAt:Date.now() // timestamp on the record itself
-    });
-    if(cu)u.cust=custVal||x.cust;return u;
+    var u=Object.assign({},x,{qty:nq,rateKg:nr,base:base,gst:gst,total:total,editLog:log});
+    if(cu)u.cust=custVal||x.cust;
+    return u;
   });
   ls('cs5_h',hist);
   pushAllToCloud();
